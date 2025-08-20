@@ -43,6 +43,9 @@ class McumgrFlutterPlugin : FlutterPlugin, MethodCallHandler {
 
 	private var managers: MutableMap<String, UpdateManager> = mutableMapOf()
 
+	// File system managers per device
+	private var fsManagers: MutableMap<String, FsManager> = mutableMapOf()
+
 	override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
 		context = flutterPluginBinding.applicationContext
 
@@ -124,6 +127,45 @@ class McumgrFlutterPlugin : FlutterPlugin, MethodCallHandler {
 
 				FlutterMethod.readImageList -> {
 					imageList(call, result)
+				}
+
+				// FS Manager methods
+				FlutterMethod.initializeFsManager -> {
+					initializeFsManager(call)
+					result.success(null)
+				}
+
+				FlutterMethod.fsList -> {
+					fsList(call, result)
+				}
+
+				FlutterMethod.fsStat -> {
+					fsStat(call, result)
+				}
+
+				FlutterMethod.fsRemove -> {
+					fsRemove(call, result)
+				}
+
+				FlutterMethod.fsOpen -> {
+					fsOpen(call, result)
+				}
+
+				FlutterMethod.fsRead -> {
+					fsRead(call, result)
+				}
+
+				FlutterMethod.fsWrite -> {
+					fsWrite(call, result)
+				}
+
+				FlutterMethod.fsClose -> {
+					fsClose(call, result)
+				}
+
+				FlutterMethod.killFsManager -> {
+					killFsManager(call)
+					result.success(null)
 				}
 			}
 		} catch (e: FlutterError) {
@@ -291,4 +333,127 @@ class McumgrFlutterPlugin : FlutterPlugin, MethodCallHandler {
 
 		updateManager.imageManager.list(callback)
 	}
+
+		// --- FS Manager helpers ---
+
+		@Throws(FlutterError::class)
+		private fun initializeFsManager(@NonNull call: MethodCall) {
+			val address = (call.arguments as? String).guard {
+				throw WrongArguments("Device address expected")
+			}
+			if (fsManagers.containsKey(address)) {
+				// already initialized
+				return
+			}
+			val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(address)
+			// Reuse existing transport if UpdateManager exists for device
+			val transport = if (managers.containsKey(address)) {
+				managers[address]!!.let { it }
+				// access transport via UpdateManager (it exposes releaseTransport only) - retrieve transport via reflection not ideal
+				// For now create a new transport; future improvement: share transport
+				LoggableMcuMgrBleTransport(context, device, logStreamHandler)
+			} else {
+				LoggableMcuMgrBleTransport(context, device, logStreamHandler)
+			}
+			val fsManager = FsManager(transport, StreamHandler(), logStreamHandler)
+			fsManagers[address] = fsManager
+		}
+
+		@Throws(FlutterError::class)
+		private fun retrieveFsManager(@NonNull call: MethodCall): FsManager {
+			val address = (call.arguments as? String).guard {
+				throw WrongArguments("Device address expected")
+			}
+			return fsManagers[address].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+		}
+
+		private fun fsList(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsStatRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.list(arg.path) { rb -> result.success(rb) }
+		}
+
+		private fun fsStat(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsStatRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.stat(arg.path) { rb -> result.success(rb) }
+		}
+
+		private fun fsRemove(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsRemoveRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.remove(arg.path) { rb -> result.success(rb) }
+		}
+
+		private fun fsOpen(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsOpenRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.open(arg.path, arg.flags) { rb -> result.success(rb) }
+		}
+
+		private fun fsRead(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsReadRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.read(arg.fd, arg.offset, arg.length) { rb -> result.success(rb) }
+		}
+
+		private fun fsWrite(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsWriteRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.write(arg.fd, arg.data_.toByteArray(), arg.offset) { rb -> result.success(rb) }
+		}
+
+		private fun fsClose(@NonNull call: MethodCall, result: Result) {
+			val bytes = (call.arguments as? ByteArray).guard {
+				throw WrongArguments("Can not parse provided arguments: ${call.arguments?.javaClass}")
+			}
+			val arg = ProtoFsCloseRequest.ADAPTER.decode(bytes)
+			val fsManager = fsManagers[arg.uuid].guard {
+				throw FlutterError("FsManagerDoesNotExist", "FS manager does not exist")
+			}
+			fsManager.close(arg.fd) { rb -> result.success(rb) }
+		}
+
+		private fun killFsManager(@NonNull call: MethodCall) {
+			val address = (call.arguments as? String).guard {
+				throw WrongArguments("Device Address expected")
+			}
+			if (fsManagers.containsKey(address)) {
+				// release transport if needed
+				// For now just remove
+				fsManagers.remove(address)
+			}
+		}
 }

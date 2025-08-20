@@ -20,4 +20,5 @@ struct Channel {
     static let updateStateEventChannel = Channel(name:  "/update_state_event_channel")
     static let updateInProgressChannel = Channel(name:  "/update_in_progress_channel")
     static let logEventChannel = Channel(name:  "/log_event_channel")
+    static let fsReadEventChannel = Channel(name: "/fs_read_event_channel")
 }

@@ -8,6 +8,7 @@ enum class FlutterMethod {
 	update,
 	updateSingleImage,
 	initializeUpdateManager,
+	initializeFsManager,
 	pause,
 	resume,
 	isPaused,
@@ -17,6 +18,15 @@ enum class FlutterMethod {
 	clearLogs,
 	kill,
 	readImageList;
+	// fs manager methods could also be called via method channel as bytes
+	fsList,
+	fsStat,
+	fsRemove,
+	fsOpen,
+	fsRead,
+	fsWrite,
+	fsClose,
+	killFsManager;
 
 	companion object {
 		fun valueOfOrNull(string: String) = try {

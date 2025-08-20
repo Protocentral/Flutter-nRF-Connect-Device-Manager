@@ -12,6 +12,7 @@ public enum FlutterMethod: String {
     case update
     case updateSingleImage
     case initializeUpdateManager
+    case initializeFsManager
     case pause
     case resume
     case isPaused
@@ -22,6 +23,14 @@ public enum FlutterMethod: String {
     case readLogs
     case clearLogs
     case readImageList
+    case fsList
+    case fsStat
+    case fsRemove
+    case fsOpen
+    case fsRead
+    case fsWrite
+    case fsClose
+    case killFsManager
 }
 
 /// Methods which platform sends to Flutter

@@ -19,6 +19,11 @@ class UpdateLoggerChannel {
       const EventChannel(_namespace + '/log_event_channel');
 }
 
+class FsManagerChannel {
+  static const EventChannel readStream =
+      const EventChannel(_namespace + '/fs_read_event_channel');
+}
+
 /// Channel methods related to UpdateManager
 class UpdateManagerMethod {
   final String _rawValue;
@@ -51,4 +56,23 @@ class UpdateLoggerMethod {
 
   static const readLogs = const UpdateLoggerMethod('readLogs');
   static const clearLogs = const UpdateLoggerMethod('clearLogs');
+}
+
+/// Channel methods related to File System Manager
+class FsManagerMethod {
+  final String _rawValue;
+
+  const FsManagerMethod(this._rawValue);
+
+  String get rawValue => _rawValue;
+
+  static const initializeFsManager = const FsManagerMethod('initializeFsManager');
+  static const fsList = const FsManagerMethod('fsList');
+  static const fsStat = const FsManagerMethod('fsStat');
+  static const fsOpen = const FsManagerMethod('fsOpen');
+  static const fsRead = const FsManagerMethod('fsRead');
+  static const fsWrite = const FsManagerMethod('fsWrite');
+  static const fsClose = const FsManagerMethod('fsClose');
+  static const fsRemove = const FsManagerMethod('fsRemove');
+  static const killFsManager = const FsManagerMethod('killFsManager');
 }

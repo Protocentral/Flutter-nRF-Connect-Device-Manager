@@ -157,3 +157,95 @@ message ProtoImageSlot {
     bool active = 8;
     bool permanent = 9;
 }
+
+// FILE SYSTEM (FS) MANAGER
+message ProtoFsEntry {
+    string name = 1;
+    uint64 size = 2;
+    bool dir = 3;
+    int32 mode = 4;
+    uint64 mtime = 5; // milliseconds since epoch
+}
+
+message ProtoFsListResponse {
+    string uuid = 1;
+    repeated ProtoFsEntry files = 2;
+    bool success = 3;
+    optional ProtoError error = 4;
+}
+
+message ProtoFsStatRequest {
+    string uuid = 1;
+    string path = 2;
+}
+
+message ProtoFsStatResponse {
+    string uuid = 1;
+    optional ProtoFsEntry stats = 2;
+    bool success = 3;
+    optional ProtoError error = 4;
+}
+
+message ProtoFsRemoveRequest {
+    string uuid = 1;
+    string path = 2;
+}
+
+message ProtoFsRemoveResponse {
+    string uuid = 1;
+    bool success = 2;
+    optional ProtoError error = 3;
+}
+
+message ProtoFsOpenRequest {
+    string uuid = 1;
+    string path = 2;
+    int32 flags = 3;
+}
+
+message ProtoFsOpenResponse {
+    string uuid = 1;
+    int32 fd = 2;
+    bool success = 3;
+    optional ProtoError error = 4;
+}
+
+message ProtoFsReadRequest {
+    string uuid = 1;
+    int32 fd = 2;
+    uint64 offset = 3;
+    uint64 length = 4;
+}
+
+message ProtoFsReadResponse {
+    string uuid = 1;
+    bytes data = 2;
+    bool done = 3;
+    bool success = 4;
+    optional ProtoError error = 5;
+}
+
+message ProtoFsCloseRequest {
+    string uuid = 1;
+    int32 fd = 2;
+}
+
+message ProtoFsCloseResponse {
+    string uuid = 1;
+    bool success = 2;
+    optional ProtoError error = 3;
+}
+
+message ProtoFsWriteRequest {
+    string uuid = 1;
+    int32 fd = 2;
+    bytes data = 3;
+    uint64 offset = 4;
+}
+
+message ProtoFsWriteResponse {
+    string uuid = 1;
+    uint64 written = 2;
+    bool success = 3;
+    optional ProtoError error = 4;
+}

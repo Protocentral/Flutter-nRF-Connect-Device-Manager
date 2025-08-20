@@ -9,6 +9,7 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
     static let namespace = "mcumgr_flutter"
     
     private var updateManagers: [String : UpdateManager] = [:]
+    private var fsManagers: [String : FsManager] = [:]
     private var centralManager: CBCentralManager? = nil
     
     private let updateStateEventChannel: FlutterEventChannel
@@ -16,6 +17,7 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
     
     // Log channels
     private let logEventChannel: FlutterEventChannel
+    private let fsReadEventChannel: FlutterEventChannel
     
     private let updateStateStreamHandler = StreamHandler()
     private let updateProgressStreamHandler = StreamHandler()
@@ -24,17 +26,20 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
     public init(
         updateStateEventChannel: FlutterEventChannel, 
         updateProgressEventChannel: FlutterEventChannel, 
-        logEventChannel: FlutterEventChannel
+        logEventChannel: FlutterEventChannel,
+        fsReadEventChannel: FlutterEventChannel
     ) {
         self.updateStateEventChannel = updateStateEventChannel
         self.updateProgressEventChannel = updateProgressEventChannel
         self.logEventChannel = logEventChannel
+        self.fsReadEventChannel = fsReadEventChannel
         
         super.init()
         
-        updateStateEventChannel.setStreamHandler(updateStateStreamHandler)
-        updateProgressEventChannel.setStreamHandler(updateProgressStreamHandler)
-        logEventChannel.setStreamHandler(logStreamHandler)
+    updateStateEventChannel.setStreamHandler(updateStateStreamHandler)
+    updateProgressEventChannel.setStreamHandler(updateProgressStreamHandler)
+    logEventChannel.setStreamHandler(logStreamHandler)
+    fsReadEventChannel.setStreamHandler(StreamHandler())
     }
     
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -43,11 +48,13 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
         let updateStateEventChannel = FlutterEventChannel(channel: .updateStateEventChannel, binaryMessenger: registrar.messenger())
         let updateProgressEventChannel = FlutterEventChannel(channel: .updateProgressEventChannel, binaryMessenger: registrar.messenger())
         let logEventChannel = FlutterEventChannel(channel: .logEventChannel, binaryMessenger: registrar.messenger())
+        let fsReadEventChannel = FlutterEventChannel(channel: .fsReadEventChannel, binaryMessenger: registrar.messenger())
        
         let instance = SwiftMcumgrFlutterPlugin(
             updateStateEventChannel: updateStateEventChannel,
             updateProgressEventChannel: updateProgressEventChannel,
-            logEventChannel: logEventChannel
+            logEventChannel: logEventChannel,
+            fsReadEventChannel: fsReadEventChannel
         )
         registrar.addMethodCallDelegate(instance, channel: channel)
     }
@@ -88,6 +95,24 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
                 result(nil)
             case .readLogs:
                 result(try readLogs(call: call).serializedData())
+            case .initializeFsManager:
+                try initializeFsManager(call: call, result: result)
+            case .fsList:
+                try fsList(call: call, result: result)
+            case .fsStat:
+                try fsStat(call: call, result: result)
+            case .fsRemove:
+                try fsRemove(call: call, result: result)
+            case .fsOpen:
+                try fsOpen(call: call, result: result)
+            case .fsRead:
+                try fsRead(call: call, result: result)
+            case .fsWrite:
+                try fsWrite(call: call, result: result)
+            case .fsClose:
+                try fsClose(call: call, result: result)
+            case .killFsManager:
+                try killFsManager(call: call)
             case .clearLogs:
                 try retrieveManager(call: call).updateLogger.clearLogs()
                 result(nil)
@@ -253,6 +278,225 @@ public class SwiftMcumgrFlutterPlugin: NSObject, FlutterPlugin {
                 result(FlutterError(error: error, call: call))
             }
         }
+    }
+
+    // MARK: FS Manager
+    private func initializeFsManager(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let uuidString = call.arguments as? String, let uuid = UUID(uuidString: uuidString) else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not create UUID from provided arguments", details: call.debugDetails)
+        }
+
+        if let centralManager {
+            guard let peripheral = centralManager.retrievePeripherals(withIdentifiers: [uuid]).first else {
+                throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can't retrieve peripheral with provided UUID", details: call.debugDetails)
+            }
+
+            try handleFsManager(for: peripheral, call: call)
+            result(nil)
+        } else {
+            centralManager = CBCentralManager()
+            centralManager?.delegate = self
+
+            initManagerResultQueue.enqueue((call: call, result: result))
+        }
+    }
+
+    private func handleFsManager(for peripheral: CBPeripheral, call: FlutterMethodCall) throws {
+        guard let uuidString = call.arguments as? String else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not create UUID from provided arguments", details: call.debugDetails)
+        }
+
+        guard case .none = fsManagers[uuidString] else {
+            throw FlutterError(code: ErrorCode.updateManagerExists.rawValue, message: "Fs manager for provided peripheral already exists", details: call.debugDetails)
+        }
+
+        let manager = FsManager(peripheral: peripheral)
+        fsManagers[uuidString] = manager
+    }
+
+    private func retrieveFsManager(call: FlutterMethodCall) throws -> FsManager {
+        guard let uuid = call.arguments as? String else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can't retrieve UUID of the device", details: call.debugDetails)
+        }
+
+        guard let manager = fsManagers[uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        return manager;
+    }
+
+    private func fsList(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsStatRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.list(path: args.path) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsStat(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsStatRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.stat(path: args.path) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsRemove(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsRemoveRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.remove(path: args.path) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsOpen(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsOpenRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.open(path: args.path, flags: args.flags) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsRead(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsReadRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.read(fd: args.fd, offset: Int32(args.offset), length: Int32(args.length)) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsWrite(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsWriteRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.write(fd: args.fd, data: args.data, offset: Int32(args.offset)) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func fsClose(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
+        guard let data = call.arguments as? FlutterStandardTypedData else {
+            throw FlutterError(code: ErrorCode.wrongArguments.rawValue, message: "Can not parse provided arguments", details: call.debugDetails)
+        }
+
+        let args = try ProtoFsCloseRequest(serializedData: data.data)
+        guard let manager = fsManagers[args.uuid] else {
+            throw FlutterError(code: ErrorCode.updateManagerDoesNotExist.rawValue, message: "Fs manager does not exist", details: call.debugDetails)
+        }
+
+        manager.close(fd: args.fd) { data, error in
+            if let err = error {
+                result(FlutterError(error: err, call: call))
+                return
+            }
+
+            if let d = data {
+                result(d)
+            } else {
+                result(FlutterError(code: ErrorCode.internalError.rawValue, message: "No data", details: call.debugDetails))
+            }
+        }
+    }
+
+    private func killFsManager(call: FlutterMethodCall) throws {
+        let uuid = try retrieveManager(call: call).peripheral.identifier.uuidString
+        fsManagers.removeValue(forKey: uuid)
     }
 }
 
